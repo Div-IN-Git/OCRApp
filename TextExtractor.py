@@ -17,6 +17,8 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+APP_VERSION = "1.0.0"
+
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def get_app_dir():
@@ -178,7 +180,7 @@ class OCRApp(QWidget):
         self.resize(1100, 500)
         qr = self.frameGeometry()
         cp = QApplication.desktop().screen().rect().center()
-        fcp = cp + QPoint(0, -60)  # Adjusted center point slightly higher
+        fcp = cp + QPoint(0, -60)  # center poiny adjust
         qr.moveCenter(fcp)
         self.move(qr.topLeft())
         self.browser_active = False
