@@ -2,6 +2,7 @@ import os
 import sys
 import io
 import pickle
+import time
 import subprocess
 import traceback
 from PyQt5.QtCore import QPoint
@@ -16,8 +17,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-
-APP_VERSION = "1.0.0"
+from googleapiclient.errors import HttpError
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
@@ -29,8 +29,9 @@ def get_app_dir():
 
 def authenticate():
     creds = None
-    if os.path.exists('token.pkl'):
-        with open('token.pkl', 'rb') as token:
+    token_path = os.path.join(get_app_dir(), 'token.pkl')
+    if os.path.exists(token_path):
+        with open(token_path, 'rb') as token:
             creds = pickle.load(token)
 
     if not creds or not creds.valid:
@@ -40,7 +41,7 @@ def authenticate():
             cred_path = os.path.join(get_app_dir(), 'credentials.json')
             flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open('token.pkl', 'wb') as token:
+        with open(token_path, 'wb') as token:
             pickle.dump(creds, token)
     return build('drive', 'v3', credentials=creds)
 
@@ -58,6 +59,56 @@ def upload_image_as_doc(service, img_path):
     ).execute()
     return file.get('id')
 
+MAX_RETRIES = 5
+RETRY_DELAY = 3    # seconds
+
+def upload_image_as_doc_with_retry(service, img_path, log_signal=None, error_signal=None):
+    last_exception = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            if log_signal:
+                log_signal.emit(f"Uploading {os.path.basename(img_path)} (attempt {attempt}/{MAX_RETRIES})")
+
+            file_metadata = {
+                'name': os.path.basename(img_path),
+                'mimeType': 'application/vnd.google-apps.document'
+            }
+
+            media = MediaFileUpload(
+                img_path,
+                mimetype='image/jpeg',
+                resumable=True
+            )
+
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+
+            return file.get('id') #success
+
+        except HttpError as e:
+            last_exception = e
+            if error_signal:
+                error_signal.emit(
+                    f"Upload failed ({attempt}/{MAX_RETRIES}) for {os.path.basename(img_path)}: {e}"
+                )
+
+        except Exception as e:
+            last_exception = e
+            if error_signal:
+                error_signal.emit(
+                    f"Unexpected error ({attempt}/{MAX_RETRIES}) for {os.path.basename(img_path)}: {e}"
+                )
+
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY)
+
+    #All retries failed
+    raise last_exception
+
 
 def download_text(service, file_id, output_path):
     request = service.files().export_media(fileId=file_id, mimeType='text/plain')
@@ -66,6 +117,56 @@ def download_text(service, file_id, output_path):
         done = False
         while not done:
             status, done = downloader.next_chunk()
+            
+def download_text_with_retry(
+    service,
+    file_id,
+    output_path,
+    img_name,
+    log_signal=None,
+    error_signal=None
+):
+    last_exception = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            if log_signal:
+                log_signal.emit(
+                    f"Downloading {img_name} (attempt {attempt}/{MAX_RETRIES})"
+                )
+
+            request = service.files().export_media(
+                fileId=file_id,
+                mimeType='text/plain'
+            )
+
+            with io.FileIO(output_path, 'wb') as fh:
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+
+            return  #SUCCESS
+
+        except HttpError as e:
+            last_exception = e
+            if error_signal:
+                error_signal.emit(
+                    f"Download failed ({attempt}/{MAX_RETRIES}) for {img_name}: {e}"
+                )
+
+        except Exception as e:
+            last_exception = e
+            if error_signal:
+                error_signal.emit(
+                    f"Unexpected download error ({attempt}/{MAX_RETRIES}) for {img_name}: {e}"
+                )
+
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY)
+
+    # All retries failed
+    raise last_exception
 
 
 def combine_txts(output_folder):
@@ -133,12 +234,21 @@ class OCRWorker(QThread):
                 for img_path in batch_paths:
                     img = os.path.basename(img_path)
                     try:
-                        file_id = upload_image_as_doc(service, img_path)
+                        file_id = upload_image_as_doc_with_retry(
+                            service,
+                            img_path,
+                            log_signal=self.log_signal,
+                            error_signal=self.error_signal
+                        )
+
                         batch_ids[img] = file_id
                         file_ids.append(file_id)
-                        self.log_signal.emit(f"Uploaded: {img}")
+                        self.log_signal.emit(f"Uploaded successfully: {img}")
+
                     except Exception as e:
-                        self.error_signal.emit(f"Error uploading {img}: {str(e)}")
+                        self.error_signal.emit(
+                            f"FAILED after {MAX_RETRIES} attempts: {img}\nReason: {e}"
+                        )
 
                 all_batches.append(batch_ids)
 
@@ -147,12 +257,27 @@ class OCRWorker(QThread):
             for batch_ids in all_batches:
                 for img, file_id in batch_ids.items():
                     try:
-                        output_path = os.path.join(self.output_dir, os.path.splitext(img)[0] + '.txt')
-                        download_text(service, file_id, output_path)
+                        output_path = os.path.join(
+                            self.output_dir,
+                            os.path.splitext(img)[0] + '.txt'
+                        )
+
+                        download_text_with_retry(
+                            service,
+                            file_id,
+                            output_path,
+                            img_name=img,
+                            log_signal=self.log_signal,
+                            error_signal=self.error_signal
+                        )
+
                         self.log_signal.emit(f"Saved: {output_path}")
                         file_count += 1
+
                     except Exception as e:
-                        self.error_signal.emit(f"Error downloading {img}: {str(e)}")
+                        self.error_signal.emit(
+                            f"FAILED after {MAX_RETRIES} attempts: {img}\nReason: {e}"
+                        )
 
             self.log_signal.emit("\nAll files downloaded. Combining into one output...")
             combine_txts(self.output_dir)
