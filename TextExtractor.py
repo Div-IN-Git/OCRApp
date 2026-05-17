@@ -19,6 +19,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.errors import HttpError
 
+APP_VERSION = "1.1.0"
+
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def get_app_dir():
