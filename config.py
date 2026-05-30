@@ -1,0 +1,28 @@
+APP_VERSION = "1.2.1"
+
+MAX_RETRIES = 5
+RETRY_DELAY = 3
+BATCH_SIZE = 10
+
+SCOPES = [
+    "https://www.googleapis.com/auth/drive"
+]
+
+THRESHOLD_VALUE = 215
+LINE_HEIGHT = 54
+LINE_PADDING_Y = 6
+MIN_TEXT_PIXELS_PER_SLICE = 100
+STANZA_GAP_MULTIPLIER = 1.7
+DIVIDER_HEIGHT = 10
+DIVIDER_GAP = 45
+DIVIDER_MARGIN_X = 60
+
+MIN_LINE_DISTANCE = 28
+
+# left right crop for stiched image
+FINAL_LEFT_CROP = 68
+FINAL_RIGHT_CROP = 95
+
+#toggles
+DEBUG = True
+geometry_enabled = False
