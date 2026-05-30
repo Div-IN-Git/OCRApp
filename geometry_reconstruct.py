@@ -18,6 +18,52 @@ from config import (
     DEBUG
 )
 
+def is_blank_page(image_path):
+    
+    gray = cv2.imread(
+        image_path,
+        cv2.IMREAD_GRAYSCALE
+    )
+
+    if gray is None:
+        return False
+
+    _, binary = cv2.threshold(
+        gray,
+        245,
+        255,
+        cv2.THRESH_BINARY_INV
+    )
+
+    num_labels, labels, stats, _ = (
+        cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8
+        )
+    )
+
+    large_components = 0
+
+    for i in range(1, num_labels):
+
+        area = stats[
+            i,
+            cv2.CC_STAT_AREA
+        ]
+
+        if area > 50:
+
+            large_components += 1
+
+    if DEBUG:
+
+        print(
+            f"{os.path.basename(image_path)} "
+            f"large_components={large_components}"
+        )
+
+    return large_components < 1
+
 def load_image(image_path):
 
     gray = cv2.imread(
@@ -130,7 +176,7 @@ def auto_deskew(gray):
             f"Deskew angle: {median_angle:.2f}"
         )
 
-        return rotated
+    return rotated
 
 
 # LOCAL LINE DESKEW

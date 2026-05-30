@@ -13,7 +13,8 @@ from googleapiclient.errors import HttpError
 from PyQt5.QtCore import QThread, pyqtSignal
  
 from geometry_reconstruct import (
-    ocr_line_slices
+    ocr_line_slices,
+    is_blank_page
 )
 
 from config import (
@@ -270,6 +271,12 @@ class OCRWorker(QThread):
 
                 for img_path in batch_paths:
                     img = os.path.basename(img_path)
+                    if is_blank_page(img_path):
+                        self.log_signal.emit(
+                            f"Skipped blank page: {img}"
+                        )                    
+                        continue
+                    
                     try:
                         file_id = upload_image_as_doc_with_retry(
                             service,
