@@ -15,3 +15,5 @@ build/
 # Secrets
 credentials.json
 token.pkl
+auths/*.json
+dist/*.json
